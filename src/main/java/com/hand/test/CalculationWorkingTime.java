@@ -103,7 +103,6 @@ public class CalculationWorkingTime extends UDF {
             final Date endLunchTime = DATE_FORMAT.parse(ruleJson.getString("endLunchTime").substring(11, 19));
             DATE_FORMAT.applyPattern(YYYY_MM_DD);
             final Date effectiveDate = DATE_FORMAT.parse(ruleJson.getString("effectiveDate"));
-            // 这段代码真的帮了大忙了
             final Date expiredDate;
             if (ruleJson.getString("expiredDate") == null) {
                 expiredDate = null;
@@ -420,5 +419,96 @@ public class CalculationWorkingTime extends UDF {
      */
     private boolean holidayFlag(List<String> list, String dateTime) {
         return list.contains(dateTime.substring(0, 10));
+    }
+
+    public Text evaluate(String beginDateTime,
+                         String endDateTime,
+                         boolean beginDateFlag,
+                         boolean endDateFlag,
+                         int countHolidays,
+                         String workingTimeStr,
+                         String closingTimeStr,
+                         String startLunchTimeStr,
+                         String endLunchTimeStr,
+                         String excludeHolidayFlag
+    ) throws ParseException {
+
+        // 返回一个毫秒值
+        long result;
+        String beginDateStr = beginDateTime.substring(0, 10);
+        String endDateStr = endDateTime.substring(0, 10);
+        // 用于判断输入的开始日期与结束日期是否为同一天
+        DATE_FORMAT.applyPattern(YYYY_MM_DD);
+        Date beginDate = DATE_FORMAT.parse(beginDateStr);
+        Date endDate = DATE_FORMAT.parse(endDateStr);
+        // 用于计算时长
+        DATE_FORMAT.applyPattern(YYYY_MM_DD_HH_MM_SS);
+        Date startDateTime = DATE_FORMAT.parse(beginDateTime);
+        Date closeDateTime = DATE_FORMAT.parse(endDateTime);
+        // 用于计算时长
+        DATE_FORMAT.applyPattern(HH_MM_SS);
+        // 输入的开始时间
+        Date beginTime = DATE_FORMAT.parse(beginDateTime.substring(11, 19));
+        // 输入的结束时间
+        Date endTime = DATE_FORMAT.parse(endDateTime.substring(11, 19));
+        if (StringUtils.isEmpty(beginDateTime)
+                || StringUtils.isEmpty(endDateTime)) {
+            return new Text("0");
+        }
+        // 开始日期大于结束日期
+        if (startDateTime.compareTo(closeDateTime) > 0) {
+            return new Text("-1");
+        }
+        // 格式化HH:mm:ss
+        DATE_FORMAT.applyPattern(HH_MM_SS);
+        final Date workingTime = DATE_FORMAT.parse(workingTimeStr);
+        final Date closingTime = DATE_FORMAT.parse(closingTimeStr);
+        final Date startLunchTime = DATE_FORMAT.parse(startLunchTimeStr);
+        final Date endLunchTime = DATE_FORMAT.parse(endLunchTimeStr);
+        if (beginDate.compareTo(endDate) == 0) {
+            // 不排除节假日
+            if ("N".equals(excludeHolidayFlag)) {
+                result = getDailyTime(beginTime, endTime, workingTime, closingTime, startLunchTime, endLunchTime);
+            } else {
+                // 排除节假日, 判断开始日期与结束日期是否是节假日
+                // 开始日期为节假日
+                if (beginDateFlag) {
+                    return new Text("0");
+                } else {
+                    result = getDailyTime(beginTime, endTime, workingTime, closingTime, startLunchTime, endLunchTime);
+                }
+            }
+        } else {
+            // 开始日期与结束日期不是同一天
+            // 确定计算规则 不排除节假日
+            if ("N".equals(excludeHolidayFlag)) {
+                result = getBeginDailyTime(beginTime, workingTime, closingTime, startLunchTime, endLunchTime)
+                        + getEndDailyTime(endTime, workingTime, closingTime, startLunchTime, endLunchTime)
+                        + ((endDate.getTime() - beginDate.getTime()) / DAY - 1)
+                        * getDailyTime(workingTime, closingTime, startLunchTime, endLunchTime);
+            } else {
+                // 排除节假日
+                // 判断开始日期与结束日期是否是节假日并且开始时间与结束时间之间有多少个节假日
+                if (beginDateFlag && endDateFlag) {
+                    result = ((endDate.getTime() - beginDate.getTime()) / DAY - 1 - countHolidays)
+                            * getDailyTime(workingTime, closingTime, startLunchTime, endLunchTime);
+                } else if ((!beginDateFlag) && endDateFlag) {
+                    result = getBeginDailyTime(beginTime, workingTime, closingTime, startLunchTime, endLunchTime)
+                            + ((endDate.getTime() - beginDate.getTime()) / DAY - 1 - countHolidays)
+                            * getDailyTime(workingTime, closingTime, startLunchTime, endLunchTime);
+                } else if (beginDateFlag && !(endDateFlag)) {
+                    result = getEndDailyTime(endTime, workingTime, closingTime, startLunchTime, endLunchTime)
+                            + ((endDate.getTime() - beginDate.getTime()) / DAY - 1 - countHolidays)
+                            * getDailyTime(workingTime, closingTime, startLunchTime, endLunchTime);
+                } else {
+                    result = getBeginDailyTime(beginTime, workingTime, closingTime, startLunchTime, endLunchTime)
+                            + getEndDailyTime(endTime, workingTime, closingTime, startLunchTime, endLunchTime)
+                            + ((endDate.getTime() - beginDate.getTime()) / DAY - 1 - countHolidays)
+                            * getDailyTime(workingTime, closingTime, startLunchTime, endLunchTime);
+                }
+            }
+        }
+        final BigDecimal bigDecimal = new BigDecimal(((double) result) / HOURS);
+        return new Text(bigDecimal.setScale(2, BigDecimal.ROUND_HALF_UP).toString());
     }
 }
